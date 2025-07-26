@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Albaik Inventory App (Offline)</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- PWA Manifest: Tells the browser this is an installable app -->
+    <link rel="manifest" href="data:application/manifest+json;base64,ewogICJuYW1lIjogIkFsYmFpayBJbnZlbnRvcnkgT2ZmbGluZSIsCiAgInNob3J0X25hbWUiOiAiQWxiYWlrSW52IiwKICAic3RhcnRfdXJsIjogIi4iLAogICJkaXNwbGF5IjogInN0YW5kYWxvbmUiLAogICJiYWNrZ3JvdW5kX2NvbG9yIjogIiNmOGZhZmMiLAogICJ0aGVtZV9jb2xvciI6ICIjYzliMzU1IiwKICAiaWNvbnMiOiBbCiAgICB7ICJzcmMiOiAiaHR0cHM6Ly9wbGFjZWhvbGQuY28vMTkyngxOTIvYzliMzU1L0ZGRkZGRj90ZXh0PUFJIiwgInR5cGUiOiAiaW1hZ2UvcG5nIiwgInNpemVzIjogIjE5MngxOTIiIH0sCiAgICB7ICJzcmMiOiAiaHR0cHM6Ly9wbGFjZWhvbGQuY28vNTEyeDUxMi9jOWIzNTUvRkZGRkZGP3RleHQ9QUkiLCAidHlwZSI6ICJpbWFnZS9wbmciLCAic2l6ZXMiOiAiNTEyeDUxMiIgfQogIF0KfQ==">
+    
+    <!-- Theme Color for browser UI -->
+    <meta name="theme-color" content="#c9b355">
+    
+    <!-- JS Libraries for PDF and Excel Export -->
+    <script src="https://unpkg.com/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+    <script src="https://unpkg.com/jspdf-autotable@3.5.23/dist/jspdf.plugin.autotable.js"></script>
+    <script src="https://unpkg.com/xlsx/dist/xlsx.full.min.js"></script>
+
+    <style>
+        /* Animation for notifications */
+        @keyframes fade-in-out {
+            0% { opacity: 0; transform: translateY(-20px); }
+            10% { opacity: 1; transform: translateY(0); }
+            90% { opacity: 1; transform: translateY(0); }
+            100% { opacity: 0; transform: translateY(-20px); }
+        }
+        .animate-fade-in-out {
+            animation: fade-in-out 3s ease-in-out forwards;
+        }
+    </style>
+</head>
+<body class="bg-slate-50">
+    <div id="root"></div>
+
+    <!-- React and ReactDOM from CDN -->
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <!-- Babel for JSX transpilation in the browser -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <script type="text/babel" data-presets="react">
+        // The entire React application is contained within this script tag.
+        // It has been refactored to use IndexedDB for local storage instead of Firebase.
+
+        const { useState, useEffect, useCallback, useMemo, useRef } = React;
+
+        // --- IndexedDB Helper ---
+        // This module manages all interactions with the browser's local database.
+        const db = {
+            DB_NAME: 'AlbaikInventoryDB',
+            STORE_NAME: 'products',
+            db: null,
+
+            init() {
+                return new Promise((resolve, reject) => {
+                    if (this.db) return resolve(this.db);
+
+                    const request = indexedDB.open(this.DB_NAME, 1);
+
+                    request.onupgradeneeded = event => {
+                        const db = event.target.result;
+                        if (!db.objectStoreNames.contains(this.STORE_NAME)) {
+                            db.createObjectStore(this.STORE_NAME, { keyPath: 'id' });
+                        }
+                    };
+
+                    request.onsuccess = event => {
+                        this.db = event.target.result;
+                        resolve(this.db);
+                    };
+
+                    request.onerror = event => {
+                        console.error("IndexedDB error:", event.target.errorCode);
+                        reject('Error opening database');
+                    };
+                });
+            },
+
+            addProduct(product) {
+                return new Promise((resolve, reject) => {
+                    const newProduct = { ...product, id: `local-${Date.now()}-${Math.random()}` };
+                    const transaction = this.db.transaction([this.STORE_NAME], 'readwrite');
+                    const store = transaction.objectStore(this.STORE_NAME);
+                    const request = store.add(newProduct);
+                    request.onsuccess = () => resolve(request.result);
+                    request.onerror = () => reject('Error adding product');
+                });
+            },
+            
+            updateProduct(product) {
+                return new Promise((resolve, reject) => {
+                    const transaction = this.db.transaction([this.STORE_NAME], 'readwrite');
+                    const store = transaction.objectStore(this.STORE_NAME);
+                    const request = store.put(product);
+                    request.onsuccess = () => resolve(request.result);
+                    request.onerror = () => reject('Error updating product');
+                });
+            },
+
+            getAllProducts() {
+                return new Promise((resolve, reject) => {
+                    const transaction = this.db.transaction([this.STORE_NAME], 'readonly');
+                    const store = transaction.objectStore(this.STORE_NAME);
+                    const request = store.getAll();
+                    request.onsuccess = () => resolve(request.result);
+                    request.onerror = () => reject('Error getting products');
+                });
+            },
+
+            deleteProduct(id) {
+                return new Promise((resolve, reject) => {
+                    const transaction = this.db.transaction([this.STORE_NAME], 'readwrite');
+                    const store = transaction.objectStore(this.STORE_NAME);
+                    const request = store.delete(id);
+                    request.onsuccess = () => resolve();
+                    request.onerror = () => reject('Error deleting product');
+                });
+            },
+
+            clearAllProducts() {
+                return new Promise((resolve, reject) => {
+                    const transaction = this.db.transaction([this.STORE_NAME], 'readwrite');
+                    const store = transaction.objectStore(this.STORE_NAME);
+                    const request = store.clear();
+                    request.onsuccess = () => resolve();
+                    request.onerror = () => reject('Error clearing products');
+                });
+            }
+        };
+
+        // --- Data ---
+        const productCategories = ['Sauces', 'Drinks', 'Juices', 'Frozen', 'Chiller'];
+        const productsByCategory = {
+            'Sauces': ["Garlic Small", "Garlic Large", "Nugget Small", "Nugget Large", "Cocktail Small", "Cocktail Large", "Tahina Small", "TAHINA Large", "Garlic Super", "Burger Super Regular", "Burger Super Spicy", "Tahina Super", "Fish Super", "Pickle Regular", "Pickle Spicy", "Sweet Pickle", "Diced Pickle", "Tartar Small", "Tartar Large", "Tartar Super", "Other"],
+            'Drinks': ['Pepsi', 'Mirinda Citrus', 'Mirinda Orange', '7 Up', 'Shani', 'Pepsi Diet', '7 Up Diet', 'Lipton Peach', 'Lipton Lemon', 'Water', 'Other'],
+            'Juices': ['Mango', 'Apple', 'Orange', 'Mix Fruits', 'Large Mango', 'Large Apple', 'Large Orange', 'Large Mix Fruits', 'Other'],
+            'Frozen': [
+                'ALBAIK CHICKEN BREADED',
+                'ALBAIK CHICKEN SPICY BREADED',
+                'ALBAIK CHICKEN MARINATED',
+                'ALBAIK CHICKEN SPICY MARINATED',
+                'ALBAIK CHICKEN FILLET NUGGETS',
+                'ALBAIK CHICKEN FILLET NUGGETS SPICY',
+                'ALBAIK CHICKEN FILLET SUPER',
+                'ALBAIK CHICKEN FILLET SUPER SPICY',
+                'ALBAIK CHICKEN FINGER',
+                'ALBAIK CHICKEN FILLET NUGGETS HAJJ',
+                'ALBAIK CHICKEN FILLET BURGER',
+                'ALBAIK CHICKEN FILLET BURGER SPICY',
+                'ALBAIK CHICKEN FILLET SUPER XT',
+                'ALBAIK CHICKEN FILLET SUPER SPICY XT',
+                'ALBAIK FISH FILLET NUGGETS',
+                'ALBAIK FISH FILLET SUPER',
+                'ALBAIK FISH FILLET NUGGETS SPICY',
+                'ALBAIK FISH FILLET SUPER SPICY',
+                'ALBAIK SHRIMPS JUMBO',
+                'ALBAIK SHRIMPS VALUE',
+                'ALBAIK SANDWICH SHRIMPS',
+                'ALBAIK HOMMOS DIP PORTION',
+                'ALBAIK GARLIC SMALL PORTION',
+                'ALBAIK GARLIC LARGE PORTION',
+                'ALBAIK COCKTAIL SMALL PORTION',
+                'ALBAIK COCKTAIL LARGE PORTION',
+                'ALBAIK NUGGETS SAUCE PORTION',
+                'ALBAIK GARLIC SUPER SAUCE',
+                'ALBAIK SHRIMPS / CFB SUPER SAUCE',
+                'ALBAIK LIGHT TARTAR SAUCE',
+                'ALBAIK FISH SUPER SAUCE',
+                'ALBAIK HOMMOS DIP BULK',
+                'ALBAIK COLESLAW SAUCE',
+                'ALBAIK CFB SPICY SUPER SAUCE',
+                'ALBAIK COLESLAW PORTION',
+                'ALBAIK COLESLAW VEGETABLES SANDWICH',
+                'ALBAIK COLESLAW VEGETABLES BULK',
+                'ALBAIK PICKLES CUCUMBER',
+                'ALBAIK PICKLES CUCUMBER SPICY',
+                'ALBAIK PICKLES CUCUMBER SWEET',
+                'ALBAIK GCF SAUCE',
+                'ALBAIK FROZEN CHICKEN FILLET',
+                'ALBAIK MARINATED CHICKEN STRIPS SPICY',
+                'ALBAIK Falafel Nuggets',
+                'ALBAIK Falafel Super Fillet',
+                'ALBAIK Marinated Chicken Strips',
+                'ALBAIK FROZEN CHCKEN MARINATED REGULAR',
+                'ALBAIK FROZEN CHICKEN MARINATED SPICY',
+                'ALBAIK Boneless Thighs Breaded',
+                'ALBAIK Boneless Drumsticks Breaded',
+                'ALBAIK Chicken Strips Breaded',
+                'Other'
+            ],
+            'Chiller': ['Yogurt', 'Cheese', 'Milk', 'Other']
+        };
+        const allProductNames = Object.values(productsByCategory).flat();
+        const productDateRules = new Map([
+            ["Garlic Small", { expireDays: 45, albaikDays: 34 }], ["Garlic Large", { expireDays: 45, albaikDays: 34 }], ["Nugget Small", { expireDays: 45, albaikDays: 34 }], ["Nugget Large", { expireDays: 45, albaikDays: 34 }], ["Cocktail Small", { expireDays: 45, albaikDays: 34 }], ["Cocktail Large", { expireDays: 45, albaikDays: 34 }], ["Tahina Small", { expireDays: 45, albaikDays: 34 }], ["TAHINA Large", { expireDays: 45, albaikDays: 34 }],
+            ["Garlic Super", { expireDays: 45, albaikDays: 39 }], ["Burger Super Regular", { expireDays: 45, albaikDays: 39 }], ["Burger Super Spicy", { expireDays: 45, albaikDays: 39 }], ["Tahina Super", { expireDays: 45, albaikDays: 39 }], ["Fish Super", { expireDays: 45, albaikDays: 39 }],
+            ["Pickle Regular", { expireDays: 60, albaikDays: 44 }], ["Pickle Spicy", { expireDays: 60, albaikDays: 44 }], ["Sweet Pickle", { expireDays: 60, albaikDays: 44 }], ["Diced Pickle", { expireDays: 60, albaikDays: 44 }],
+            ["Tartar Small", { expireDays: 30, albaikDays: 20 }], ["Tartar Large", { expireDays: 30, albaikDays: 20 }], ["Tartar Super", { expireDays: 30, albaikDays: 24 }],
+            ["Pepsi", { expireDays: 274, albaikDays: 34 }], ["Mirinda Citrus", { expireDays: 274, albaikDays: 34 }], ["Mirinda Orange", { expireDays: 274, albaikDays: 34 }], ["7 Up", { expireDays: 274, albaikDays: 34 }], ["Shani", { expireDays: 274, albaikDays: 34 }],
+            ["Pepsi Diet", { expireDays: 60, albaikDays: 34 }], ["7 Up Diet", { expireDays: 60, albaikDays: 34 }],
+            ["Lipton Peach", { expireDays: 274, albaikDays: 59 }], ["Lipton Lemon", { expireDays: 274, albaikDays: 59 }],
+        ]);
+        const juiceDateRules = new Map([
+            ['Mango', { subtractDays: 5 }], ['Large Mango', { subtractDays: 5 }], ['Mix Fruits', { subtractDays: 5 }], ['Large Mix Fruits', { subtractDays: 5 }],
+            ['Apple', { subtractDays: 9 }], ['Large Apple', { subtractDays: 9 }], ['Orange', { subtractDays: 9 }], ['Large Orange', { subtractDays: 9 }],
+        ]);
+        
+        // --- Date/Icon/Component logic ---
+        const addDaysAndFormat = (dateStr, days) => { const date = new Date(dateStr); date.setDate(date.getDate() + days); return date.toISOString().split('T')[0]; };
+        const subtractDaysAndFormat = (dateStr, days) => { const date = new Date(dateStr); date.setDate(date.getDate() - days); return date.toISOString().split('T')[0]; };
+        const calculateRemainingDays = (dateStr) => { if (!dateStr) return null; const today = new Date(); const expiryDate = new Date(dateStr); today.setHours(0, 0, 0, 0); expiryDate.setHours(0, 0, 0, 0); const diffTime = expiryDate.getTime() - today.getTime(); return Math.ceil(diffTime / (1000 * 60 * 60 * 24)); };
+        const formatDate = (dateStr) => { if (!dateStr) return 'N/A'; try { const date = new Date(dateStr); const userTimezoneOffset = date.getTimezoneOffset() * 60000; const adjustedDate = new Date(date.getTime() + userTimezoneOffset); const day = String(adjustedDate.getDate()).padStart(2, '0'); const month = String(adjustedDate.getMonth() + 1).padStart(2, '0'); const year = adjustedDate.getFullYear(); return `${day}/${month}/${year}`; } catch (e) { return 'Invalid Date'; } };
+        const formatReportDate = (dateStr) => formatDate(dateStr);
+        const PlusIcon = ({ className }) => (<svg className={className} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>);
+        const TrashIcon = ({ className }) => (<svg className={className} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>);
+        const ShareIcon = ({ className }) => (<svg className={className} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M8.684 13.342C8.886 12.938 9 12.482 9 12s-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.368a3 3 0 105.367 2.684 3 3 0 00-5.367-2.684z" /></svg>);
+        const WarningIcon = ({ className }) => (<svg className={className} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>);
+        const ClipboardCopyIcon = ({ className }) => (<svg className={className} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>);
+        const CheckIcon = ({ className }) => (<svg className={className} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>);
+        const ExcelIcon = ({ className }) => (<svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M14 2H6C4.89543 2 4 2.89543 4 4V20C4 21.1046 4.89543 22 6 22H18C19.1046 22 20 21.1046 20 20V8L14 2Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M14 2V8H20" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M12 18L15 15L12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M9 12L12 15L9 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>);
+        const PdfIcon = ({ className }) => (<svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M14 2H6C4.89543 2 4 2.89543 4 4V20C4 21.1046 4.89543 22 6 22H18C19.1046 22 20 21.1046 20 20V8L14 2Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M14 2V8H20" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M9 14V12C9 11.4477 9.44772 11 10 11H12C13.1046 11 14 11.8954 14 13C14 14.1046 13.1046 15 12 15H10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M9 18V14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>);
+        const StoreIcon = ({ className }) => (<svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M3 6L12 2L21 6V20C21 20.5304 20.7893 21.0391 20.4142 21.4142C20.0391 21.7893 19.5304 22 19 22H5C4.46957 22 3.96086 21.7893 3.58579 21.4142C3.21071 21.0391 3 20.5304 3 20V6Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M8 6V22" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M16 6V22" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M2 6H22" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>);
+
+        const RemainingDaysDisplay = ({ days }) => { if (days === null) { return <span className="text-slate-500">N/A</span>; } const colorClass = days <= 3 ? 'text-red-600' : days <= 7 ? 'text-yellow-600' : 'text-green-600'; const fontWeight = days <= 7 ? 'font-bold' : 'font-semibold'; return <span className={`${colorClass} ${fontWeight}`}>{days} Days</span>; };
+        const ConfirmationModal = ({ isOpen, onClose, onConfirm, title, children }) => { if (!isOpen) return null; return (<div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex justify-center items-center p-4"><div className="bg-white rounded-lg shadow-2xl p-6 md:p-8 w-full max-w-md"><h2 className="text-2xl font-bold text-slate-800 mb-4">{title}</h2><div className="text-slate-600 mb-6">{children}</div><div className="flex justify-end gap-4"><button onClick={onClose} className="px-4 py-2 rounded-md text-slate-700 bg-slate-200 hover:bg-slate-300 transition-colors">Cancel</button><button onClick={onConfirm} className="px-4 py-2 rounded-md text-white bg-red-600 hover:bg-red-700 transition-colors">Confirm</button></div></div></div>); };
+        const ExtensionRequestModal = ({ isOpen, onClose, expiredProducts }) => { const [copySuccess, setCopySuccess] = useState(false); const textAreaRef = useRef(null); const reportText = useMemo(() => { let report = "🚨 Urgent: Extension Request 🚨\n\nDear Sir,\n\nSome of our items have already expired. We kindly request an extension for the following products:\n\n"; expiredProducts.forEach(p => { report += `⸻\n`; report += `📦 Product: ${p.productName}\n`; report += `🔢 Batch No: ${p.batchNumber || 'N/A'}\n`; if(p.productionDate) report += `🛠️ Production Date: ${formatDate(p.productionDate)}\n`; report += `🗓️ Expire Date: ${formatDate(p.expireDate)}\n`; if(p.albaikExpire) report += `⏳ Albaik Expire: ${formatDate(p.albaikExpire)}\n`; report += `🛒 Quantity: ${p.quantityCarton || 0} Ctn, ${p.quantityPiece || 0} Pcs\n\n`; }); return report; }, [expiredProducts]); const handleCopyToClipboard = () => { if (textAreaRef.current) { textAreaRef.current.select(); document.execCommand('copy'); setCopySuccess(true); setTimeout(() => setCopySuccess(false), 2000); } }; const handleNativeShare = async () => { if (navigator.share) { try { await navigator.share({ title: 'Expired Items - Extension Request', text: reportText }); onClose(); } catch (error) { if (error.name !== 'AbortError') handleCopyToClipboard(); } } }; if (!isOpen) return null; return (<div className="fixed inset-0 bg-black bg-opacity-70 z-50 flex justify-center items-center p-4"><div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl flex flex-col h-[90vh]"><h2 className="text-2xl font-bold text-slate-800 p-6 border-b">Extension Request for Expired Items</h2><div className="p-6 flex-grow overflow-y-auto"><textarea ref={textAreaRef} readOnly className="w-full h-full p-3 border rounded-lg bg-slate-50 font-mono text-sm resize-none focus:outline-none" value={reportText}></textarea></div><div className="p-6 border-t flex flex-col sm:flex-row justify-end gap-3"><button onClick={handleCopyToClipboard} className={`flex items-center justify-center gap-2 w-full sm:w-auto px-4 py-2 rounded-lg font-semibold transition-colors ${copySuccess ? 'bg-green-600 text-white' : 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200'}`}>{copySuccess ? <><CheckIcon className="w-5 h-5" /> Copied!</> : <><ClipboardCopyIcon className="w-5 h-5" /> Copy</>}</button>{navigator.share && (<button onClick={handleNativeShare} className="flex items-center justify-center gap-2 w-full sm:w-auto px-4 py-2 bg-green-500 text-white font-semibold rounded-lg hover:bg-green-600"><ShareIcon className="w-5 h-5" /> Share...</button>)}<button onClick={onClose} className="w-full sm:w-auto px-4 py-2 rounded-lg text-slate-700 bg-slate-200 hover:bg-slate-300 font-semibold">Close</button></div></div></div>); };
+        const ShareReportModal = ({ isOpen, onClose, products, usageOrderMap }) => { const [selectedProducts, setSelectedProducts] = useState(() => new Set(allProductNames)); const [statusFilter, setStatusFilter] = useState('all'); const [batchFilter, setBatchFilter] = useState('all'); const [copySuccess, setCopySuccess] = useState(false); const [showFilters, setShowFilters] = useState(false); const [expandedCategories, setExpandedCategories] = useState(new Set()); const textAreaRef = useRef(null); const toggleCategoryExpansion = (category) => { setExpandedCategories(prev => { const next = new Set(prev); if (next.has(category)) { next.delete(category); } else { next.add(category); } return next; }); }; const handleCategoryToggle = (category, shouldSelect) => { setSelectedProducts(prev => { const next = new Set(prev); productsByCategory[category].forEach(productName => { if (shouldSelect) { next.add(productName); } else { next.delete(productName); } }); return next; }); }; const handleProductToggle = (productName) => { setSelectedProducts(prev => { const next = new Set(prev); if (next.has(productName)) { next.delete(productName); } else { next.add(productName); } return next; }); }; const filteredProducts = useMemo(() => { return products .filter(p => selectedProducts.has(p.productName)) .filter(p => { const dateToCheck = p.category === 'Frozen' ? p.expireDate : p.albaikExpire; const remainingDays = calculateRemainingDays(dateToCheck); if (statusFilter === 'active') return remainingDays > 0; if (statusFilter === 'expired') return remainingDays <= 0; if (statusFilter === 'expiring_soon') return remainingDays > 0 && remainingDays <= 3; return true; }); }, [products, selectedProducts, statusFilter]); const reportText = useMemo(() => { const today = new Date(); const headerDate = today.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }); let report = `📅 Date Summary – ${headerDate}\n\n`; const productGroupsByName = filteredProducts.reduce((acc, p) => { if (!acc[p.productName]) acc[p.productName] = []; acc[p.productName].push(p); return acc; }, {}); Object.values(productGroupsByName).forEach(group => { group.sort((a, b) => { const dateA = a.category === 'Frozen' ? a.expireDate : a.albaikExpire; const dateB = b.category === 'Frozen' ? b.expireDate : b.albaikExpire; return new Date(dateA).getTime() - new Date(dateB).getTime(); }); }); let productsToReport; if (batchFilter === 'first') { productsToReport = Object.values(productGroupsByName) .map(group => group.find(p => calculateRemainingDays(p.category === 'Frozen' ? p.expireDate : p.albaikExpire) > 0)) .filter(Boolean); } else { productsToReport = filteredProducts; } if (productsToReport.length === 0) { return "No products match the selected filters."; } const reportGroupsByCategory = productsToReport.reduce((acc, p) => { if (!acc[p.category]) acc[p.category] = []; acc[p.category].push(p); return acc; }, {}); for (const category in reportGroupsByCategory) { reportGroupsByCategory[category].sort((a, b) => { const aNameIndex = productsByCategory[a.category]?.indexOf(a.productName) ?? allProductNames.indexOf(a.productName); const bNameIndex = productsByCategory[b.category]?.indexOf(b.productName) ?? allProductNames.indexOf(b.productName); if (aNameIndex !== bNameIndex) return aNameIndex - bNameIndex; const dateA = a.category === 'Frozen' ? a.expireDate : a.albaikExpire; const dateB = b.category === 'Frozen' ? b.expireDate : b.albaikExpire; return new Date(dateA).getTime() - new Date(dateB).getTime(); }); } productCategories.forEach(category => { const productsInCategory = reportGroupsByCategory[category]; if (productsInCategory && productsInCategory.length > 0) { report += `--- ${category.toUpperCase()} ---\n\n`; productsInCategory.forEach(p => { const rem = calculateRemainingDays(p.category === 'Frozen' ? p.expireDate : p.albaikExpire); const batchLabel = usageOrderMap.get(p.id) ? ` (${usageOrderMap.get(p.id)})` : ''; report += `📦 ${p.productName}${batchLabel}\n`; if(p.productionDate) report += `🛠️ Production Date: ${formatDate(p.productionDate)}\n`; report += `🗓️ Expire Date: ${formatDate(p.expireDate)}\n`; if(p.albaikExpire) report += `⏳ Albaik Expire: ${formatDate(p.albaikExpire)}\n`; report += `🔢 Quantity: ${p.quantityCarton || 0} Ctn, ${p.quantityPiece || 0} Pcs\n`; report += `${rem === null ? '' : rem <= 0 ? '🔴' : '🕒'} Remaining: ${rem === null ? 'N/A' : `${rem} days`}\n\n`; }); } }); return report.trim(); }, [filteredProducts, batchFilter, usageOrderMap]); const handleCopyToClipboard = () => { if (textAreaRef.current) { textAreaRef.current.select(); document.execCommand('copy'); setCopySuccess(true); setTimeout(() => setCopySuccess(false), 2000); } }; const handleNativeShare = async () => { if (navigator.share) { try { await navigator.share({ title: 'Albaik Inventory Report', text: reportText }); onClose(); } catch (error) { if (error.name !== 'AbortError') handleCopyToClipboard(); } } }; if (!isOpen) return null; return (<div className="fixed inset-0 bg-black bg-opacity-70 z-50 flex justify-center items-center p-4"><div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl flex flex-col h-[90vh]"><div className="p-6 border-b flex justify-between items-center"><h2 className="text-2xl font-bold text-slate-800">Share Report</h2><button onClick={() => setShowFilters(!showFilters)} className="px-4 py-2 text-sm rounded-lg bg-slate-100 hover:bg-slate-200 font-semibold">{showFilters ? 'Hide Filters' : 'Filter Report'}</button></div><div className="flex flex-col md:flex-row flex-grow min-h-0">{showFilters && (<div className="w-full md:w-1/3 p-6 border-r flex flex-col gap-6 overflow-y-auto"><div><h3 className="font-semibold mb-2">Products</h3><div className="flex gap-2 mb-2"><button onClick={() => setSelectedProducts(new Set(allProductNames))} className="text-xs px-2 py-1 bg-slate-200 rounded">Select All</button><button onClick={() => setSelectedProducts(new Set())} className="text-xs px-2 py-1 bg-slate-200 rounded">Deselect All</button></div><div className="max-h-48 overflow-y-auto border rounded-md p-2 space-y-1">{productCategories.map(category => { const categoryProducts = productsByCategory[category]; const isAllSelected = categoryProducts.every(p => selectedProducts.has(p)); const isExpanded = expandedCategories.has(category); return (<div key={category}><div className="flex items-center gap-2 text-sm p-1 rounded hover:bg-slate-100 font-bold cursor-pointer" onClick={() => toggleCategoryExpansion(category)}><input type="checkbox" checked={isAllSelected} onChange={(e) => { e.stopPropagation(); handleCategoryToggle(category, e.target.checked)}} className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"/><span>{category}</span><span className="ml-auto text-xs">{isExpanded ? '▲' : '▼'}</span></div>{isExpanded && (<div className="pl-6">{categoryProducts.map(name => (<label key={name} className="flex items-center gap-2 text-sm p-1 rounded hover:bg-slate-100"><input type="checkbox" checked={selectedProducts.has(name)} onChange={() => handleProductToggle(name)} className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"/>{name}</label>))}</div>)}</div>)})}</div></div><div><h3 className="font-semibold mb-2">Status</h3><div className="flex flex-col gap-1"><label className="flex items-center gap-2"><input type="radio" name="status" value="all" checked={statusFilter === 'all'} onChange={e => setStatusFilter(e.target.value)} /> All</label><label className="flex items-center gap-2"><input type="radio" name="status" value="active" checked={statusFilter === 'active'} onChange={e => setStatusFilter(e.target.value)} /> Active</label><label className="flex items-center gap-2"><input type="radio" name="status" value="expiring_soon" checked={statusFilter === 'expiring_soon'} onChange={e => setStatusFilter(e.target.value)} /> Expires within 3 days</label><label className="flex items-center gap-2"><input type="radio" name="status" value="expired" checked={statusFilter === 'expired'} onChange={e => setStatusFilter(e.target.value)} /> Expired</label></div></div><div><h3 className="font-semibold mb-2">Batches</h3><div className="flex flex-col gap-1"><label className="flex items-center gap-2"><input type="radio" name="batch" value="all" checked={batchFilter === 'all'} onChange={e => setBatchFilter(e.target.value)} /> All Batches</label><label className="flex items-center gap-2"><input type="radio" name="batch" value="first" checked={batchFilter === 'first'} onChange={e => setBatchFilter(e.target.value)} /> First Available Batch</label></div></div></div>)}<div className="w-full p-6 flex flex-col"><h3 className="font-semibold mb-2">Report Preview</h3><textarea ref={textAreaRef} readOnly className="w-full flex-grow p-3 border rounded-lg bg-slate-50 font-mono text-sm resize-none focus:outline-none" value={reportText}></textarea></div></div><div className="p-6 border-t flex flex-col sm:flex-row justify-end gap-3"><button onClick={handleCopyToClipboard} className={`flex items-center justify-center gap-2 w-full sm:w-auto px-4 py-2 rounded-lg font-semibold transition-colors ${copySuccess ? 'bg-green-600 text-white' : 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200'}`}>{copySuccess ? <><CheckIcon className="w-5 h-5" /> Copied!</> : <><ClipboardCopyIcon className="w-5 h-5" /> Copy</>}</button>{navigator.share && (<button onClick={handleNativeShare} className="flex items-center justify-center gap-2 w-full sm:w-auto px-4 py-2 bg-green-500 text-white font-semibold rounded-lg hover:bg-green-600"><ShareIcon className="w-5 h-5" /> Share...</button>)}<button onClick={onClose} className="w-full sm:w-auto px-4 py-2 rounded-lg text-slate-700 bg-slate-200 hover:bg-slate-300 font-semibold">Close</button></div></div></div>); };
+        const StoreBalanceModal = ({ isOpen, onClose, products }) => { const [copySuccess, setCopySuccess] = useState(false); const textAreaRef = useRef(null); const balance = useMemo(() => { const totals = products.reduce((acc, p) => { if (!acc[p.productName]) { acc[p.productName] = { cartons: 0, pieces: 0, category: p.category }; } acc[p.productName].cartons += p.quantityCarton || 0; acc[p.productName].pieces += p.quantityPiece || 0; return acc; }, {}); return Object.entries(totals).map(([name, data]) => ({ name, ...data })); }, [products]); const reportText = useMemo(() => { let report = `🏪 Store Balance Report - ${new Date().toLocaleDateString('en-GB')}\n\n`; balance.forEach(item => { report += `⸻\n`; report += `📦 Product: ${item.name} (${item.category})\n`; report += `🛒 Total: ${item.cartons} Ctn, ${item.pieces} Pcs\n\n`; }); return report; }, [balance]); const handleCopyToClipboard = () => { if (textAreaRef.current) { textAreaRef.current.select(); document.execCommand('copy'); setCopySuccess(true); setTimeout(() => setCopySuccess(false), 2000); } }; const handleNativeShare = async () => { if (navigator.share) { try { await navigator.share({ title: 'Store Balance Report', text: reportText }); onClose(); } catch (error) { if (error.name !== 'AbortError') handleCopyToClipboard(); } } }; const handleExportPdfForBalance = () => { const { jsPDF } = window.jspdf; const doc = new jsPDF(); doc.text("Albaik Store Balance Report", 14, 16); doc.setFontSize(10); doc.text(`Exported on: ${new Date().toLocaleDateString('en-GB')}`, 14, 22); const tableColumn = ["Product Name", "Category", "Total Cartons", "Total Pieces"]; const tableRows = []; balance.forEach(item => { const itemData = [ item.name, item.category, item.cartons, item.pieces ]; tableRows.push(itemData); }); doc.autoTable({ head: [tableColumn], body: tableRows, startY: 30, styles: { fontSize: 10 }, headStyles: { fillColor: [201, 179, 85] } }); doc.save("albaik_store_balance.pdf"); }; if (!isOpen) return null; return (<div className="fixed inset-0 bg-black bg-opacity-70 z-50 flex justify-center items-center p-4"><div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl flex flex-col h-[90vh]"><h2 className="text-2xl font-bold text-slate-800 p-6 border-b">Store Balance Report</h2><div className="p-6 flex-grow overflow-y-auto"><textarea ref={textAreaRef} readOnly className="w-full h-48 p-3 border rounded-lg bg-slate-50 font-mono text-sm resize-none focus:outline-none" value={reportText}></textarea><div className="mt-4 overflow-y-auto"><table className="w-full text-sm text-left"><thead><tr className="border-b"><th className="py-2">Product Name</th><th className="py-2">Category</th><th className="py-2 text-right">Total Cartons</th><th className="py-2 text-right">Total Pieces</th></tr></thead><tbody>{balance.map(item => (<tr key={item.name} className="border-b"><td className="py-2 font-medium">{item.name}</td><td className="py-2">{item.category}</td><td className="py-2 text-right">{item.cartons}</td><td className="py-2 text-right">{item.pieces}</td></tr>))}</tbody></table></div></div><div className="p-6 border-t flex flex-col sm:flex-row justify-end gap-3"><button onClick={handleCopyToClipboard} className={`flex items-center justify-center gap-2 w-full sm:w-auto px-4 py-2 rounded-lg font-semibold transition-colors ${copySuccess ? 'bg-green-600 text-white' : 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200'}`}>{copySuccess ? <><CheckIcon className="w-5 h-5" /> Copied!</> : <><ClipboardCopyIcon className="w-5 h-5" /> Copy</>}</button>{navigator.share && (<button onClick={handleNativeShare} className="flex items-center justify-center gap-2 w-full sm:w-auto px-4 py-2 bg-green-500 text-white font-semibold rounded-lg hover:bg-green-600"><ShareIcon className="w-5 h-5" /> Share...</button>)}<button onClick={handleExportPdfForBalance} className="flex items-center justify-center gap-2 w-full sm:w-auto px-4 py-2 bg-red-50 text-red-800 font-semibold rounded-lg hover:bg-red-100 text-sm"><PdfIcon className="w-4 h-4" /> Export to PDF</button><button onClick={onClose} className="w-full sm:w-auto px-4 py-2 rounded-lg text-slate-700 bg-slate-200 hover:bg-slate-300 font-semibold">Close</button></div></div></div>); };
+        
+        const SearchableSelect = ({ options, value, onChange, placeholder, disabled }) => {
+            const [isOpen, setIsOpen] = useState(false);
+            const [searchTerm, setSearchTerm] = useState('');
+            const wrapperRef = useRef(null);
+
+            const filteredOptions = useMemo(() =>
+                options.filter(option =>
+                    option.label.toLowerCase().includes(searchTerm.toLowerCase())
+                ), [options, searchTerm]);
+
+            const selectedOptionLabel = options.find(opt => opt.value === value)?.label || '';
+
+            useEffect(() => {
+                const handleClickOutside = (event) => {
+                    if (wrapperRef.current && !wrapperRef.current.contains(event.target)) {
+                        setIsOpen(false);
+                    }
+                };
+                document.addEventListener("mousedown", handleClickOutside);
+                return () => {
+                    document.removeEventListener("mousedown", handleClickOutside);
+                };
+            }, []);
+
+            const handleSelect = (optionValue) => {
+                if(disabled) return;
+                onChange(optionValue);
+                setIsOpen(false);
+                setSearchTerm('');
+            };
+
+            return (
+                <div className="relative w-full" ref={wrapperRef}>
+                    <div className={`w-full border border-slate-300 rounded-lg flex items-center justify-between ${disabled ? 'bg-slate-100 cursor-not-allowed' : 'bg-white focus-within:ring-2 focus-within:ring-indigo-500'}`}>
+                        <input
+                            type="text"
+                            placeholder={!value ? placeholder : ''}
+                            className={`w-full px-4 py-2 bg-transparent outline-none cursor-pointer ${disabled ? 'placeholder-slate-400 cursor-not-allowed' : ''}`}
+                            value={isOpen ? searchTerm : selectedOptionLabel}
+                            onFocus={() => {
+                                if(disabled) return;
+                                setIsOpen(true);
+                                setSearchTerm('');
+                            }}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                            disabled={disabled}
+                        />
+                         <svg 
+                            onClick={() => !disabled && setIsOpen(!isOpen)}
+                            className="w-5 h-5 text-slate-400 mr-2 cursor-pointer" 
+                            fill="none" 
+                            stroke="currentColor" 
+                            viewBox="0 0 24 24" 
+                            xmlns="http://www.w3.org/2000/svg">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path>
+                        </svg>
+                    </div>
+                    {isOpen && !disabled && (
+                        <ul className="absolute z-20 w-full mt-1 bg-white border border-slate-300 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                            {filteredOptions.length > 0 ? filteredOptions.map(option => (
+                                <li
+                                    key={option.value}
+                                    className={`px-4 py-2 cursor-pointer hover:bg-indigo-100 ${value === option.value ? 'bg-indigo-100 font-semibold' : ''}`}
+                                    onClick={() => handleSelect(option.value)}
+                                >
+                                    {option.label}
+                                </li>
+                            )) : <li className="px-4 py-2 text-slate-500">No results found</li>}
+                        </ul>
+                    )}
+                </div>
+            );
+        };
+
+        const ProductForm = ({ onAddProduct, isAdding, products }) => { const [productName, setProductName] = useState(''); const [otherProductName, setOtherProductName] = useState(''); const [category, setCategory] = useState(''); const [productionDate, setProductionDate] = useState(''); const [expireDate, setExpireDate] = useState(''); const [albaikExpire, setAlbaikExpire] = useState(''); const [quantityCarton, setQuantityCarton] = useState(''); const [quantityPiece, setQuantityPiece] = useState(''); const [batchNumber, setBatchNumber] = useState(''); const [isDateLocked, setIsDateLocked] = useState(false); const [remainingDays, setRemainingDays] = useState(null); const [error, setError] = useState(''); useEffect(() => { const rules = productDateRules.get(productName); const juiceRules = juiceDateRules.get(productName); const isFrozen = category === 'Frozen'; const isJuice = category === 'Juices'; setIsDateLocked(!!rules && !isFrozen && !isJuice); if (isFrozen || (isJuice && !juiceRules)) { setIsDateLocked(false); return; } if (rules && !isJuice) { if (productionDate) { setExpireDate(addDaysAndFormat(productionDate, rules.expireDays)); setAlbaikExpire(addDaysAndFormat(productionDate, rules.albaikDays)); } else { setExpireDate(''); setAlbaikExpire(''); } } else if (juiceRules) { setIsDateLocked(true); if(expireDate) { setAlbaikExpire(subtractDaysAndFormat(expireDate, juiceRules.subtractDays)); } else { setAlbaikExpire(''); } } else { setIsDateLocked(false); } }, [productName, productionDate, expireDate, category]); useEffect(() => { const dateToCheck = category === 'Frozen' ? expireDate : albaikExpire; setRemainingDays(dateToCheck ? calculateRemainingDays(dateToCheck) : null); }, [albaikExpire, expireDate, category]); const handleCategoryChange = (newCategory) => { setCategory(newCategory); setProductName(''); setOtherProductName(''); setProductionDate(''); setExpireDate(''); setAlbaikExpire(''); setIsDateLocked(false); }; const handleSubmit = (e) => { e.preventDefault(); setError(''); const finalProductName = productName === 'Other' ? otherProductName : productName; const finalAlbaikExpire = category === 'Frozen' ? '' : albaikExpire; const finalProductionDate = category === 'Juices' ? '' : productionDate; const cartonQty = Number(quantityCarton) || 0; const pieceQty = Number(quantityPiece) || 0; if (!finalProductName || !category || !expireDate ) { setError('Please fill out all required fields.'); return; } if (category !== 'Juices' && category !== 'Frozen' && !productionDate) { setError('Production date is required for this category.'); return; } if (category !== 'Frozen' && !finalAlbaikExpire) { setError('Albaik Expire date is required for this category.'); return; } if (cartonQty <= 0 && pieceQty <= 0) { setError('Please provide a quantity for either cartons or pieces.'); return; } if (remainingDays !== null && remainingDays <= 0 && !batchNumber) { setError('Batch number is required for expired items.'); return; } onAddProduct({ productName: finalProductName, category, productionDate: finalProductionDate, expireDate, albaikExpire: finalAlbaikExpire, batchNumber, quantityCarton: cartonQty > 0 ? cartonQty : 0, quantityPiece: pieceQty > 0 ? pieceQty : 0, }); setProductName(''); setOtherProductName(''); setProductionDate(''); setExpireDate(''); setAlbaikExpire(''); setQuantityCarton(''); setQuantityPiece(''); setRemainingDays(null); setBatchNumber(''); }; return (<div className="bg-white p-6 md:p-8 rounded-xl shadow-md border border-slate-200"><h2 className="text-2xl font-bold text-slate-700 mb-6">Add New Product</h2><form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">{error && <p className="text-red-500 text-sm lg:col-span-3">{error}</p>}<div><label htmlFor="category" className="block text-sm font-medium text-slate-600 mb-1">Category</label><SearchableSelect options={productCategories.map(c => ({value: c, label: c}))} value={category} onChange={handleCategoryChange} placeholder="Select a category" /></div><div className="lg:col-span-2"><label htmlFor="productName" className="block text-sm font-medium text-slate-600 mb-1">Product Name</label><div className="flex gap-2"><SearchableSelect options={(productsByCategory[category] || []).map(p => ({value: p, label: p}))} value={productName} onChange={(val) => setProductName(val)} placeholder="Select a product" disabled={!category} />{productName === 'Other' && (<input type="text" value={otherProductName} onChange={e => setOtherProductName(e.target.value)} placeholder="Enter custom name" className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500" required />)}</div></div>{category !== 'Juices' && (<div><label htmlFor="productionDate" className="block text-sm font-medium text-slate-600 mb-1">Production Date</label><input type="date" id="productionDate" value={productionDate} onChange={(e) => setProductionDate(e.target.value)} className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500" required /></div>)}<div><label htmlFor="expireDate" className="block text-sm font-medium text-slate-600 mb-1">Expire Date {isDateLocked && category !== 'Juices' && <span className="text-xs text-indigo-600 font-semibold">(Auto)</span>}</label><input type="date" id="expireDate" value={expireDate} onChange={(e) => setExpireDate(e.target.value)} className="w-full px-4 py-2 border border-slate-300 rounded-lg read-only:bg-slate-100" required readOnly={isDateLocked && category !== 'Juices'} /></div>{category !== 'Frozen' && (<div><label htmlFor="albaikExpire" className="block text-sm font-medium text-slate-600 mb-1">Albaik Expire {isDateLocked && <span className="text-xs text-indigo-600 font-semibold">(Auto)</span>}</label><input type="date" id="albaikExpire" value={albaikExpire} onChange={(e) => setAlbaikExpire(e.target.value)} className="w-full px-4 py-2 border border-slate-300 rounded-lg read-only:bg-slate-100" required readOnly={isDateLocked} /></div>)}{remainingDays !== null && remainingDays <= 0 && (<div><label htmlFor="batchNumber" className="block text-sm font-medium text-slate-600 mb-1">Batch No.</label><input type="text" id="batchNumber" value={batchNumber} onChange={e => setBatchNumber(e.target.value)} className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500" placeholder="e.g. 12345" required /></div>)}<div><label htmlFor="quantityCarton" className="block text-sm font-medium text-slate-600 mb-1">Quantity (Cartons)</label><input type="number" id="quantityCarton" value={quantityCarton} onChange={(e) => setQuantityCarton(e.target.value)} min="0" className="w-full px-4 py-2 border border-slate-300 rounded-lg" placeholder="e.g. 10" /></div><div><label htmlFor="quantityPiece" className="block text-sm font-medium text-slate-600 mb-1">Quantity (Pieces)</label><input type="number" id="quantityPiece" value={quantityPiece} onChange={(e) => setQuantityPiece(e.target.value)} min="0" className="w-full px-4 py-2 border border-slate-300 rounded-lg" placeholder="e.g. 50" /></div><div><label className="block text-sm font-medium text-slate-600 mb-1">Remaining Days</label><div className="w-full h-[42px] px-4 py-2 border border-slate-200 rounded-lg bg-slate-100 flex items-center justify-center"><RemainingDaysDisplay days={remainingDays} /></div></div><div className="lg:col-span-3 flex items-end"><button type="submit" disabled={isAdding} className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-indigo-600 text-white font-semibold rounded-lg shadow-md hover:bg-indigo-700 disabled:bg-indigo-300 transition-colors">{isAdding ? 'Adding...' : <><PlusIcon className="w-5 h-5" /> Add Product</>}</button></div></form></div>); };
+        const ProductList = ({ products, onDeleteProduct, onClearAll, isClearing }) => { const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false); const [isShareModalOpen, setIsShareModalOpen] = useState(false); const [isExtensionModalOpen, setIsExtensionModalOpen] = useState(false); const [isBalanceModalOpen, setIsBalanceModalOpen] = useState(false); const finalSortedProducts = useMemo(() => { const categorySortOrder = productCategories.reduce((acc, cat, index) => ({...acc, [cat]: index}), {}); return products.slice().sort((a, b) => { const categoryComparison = (categorySortOrder[a.category] ?? 99) - (categorySortOrder[b.category] ?? 99); if (categoryComparison !== 0) return categoryComparison; const aNameIndex = productsByCategory[a.category]?.indexOf(a.productName) ?? allProductNames.indexOf(a.productName); const bNameIndex = productsByCategory[b.category]?.indexOf(b.productName) ?? allProductNames.indexOf(b.productName); const nameComparison = aNameIndex - bNameIndex; if (nameComparison !== 0) return nameComparison; return new Date(a.albaikExpire).getTime() - new Date(b.albaikExpire).getTime(); }); }, [products]); const expiredProducts = useMemo(() => { return products.filter(p => { const dateToCheck = p.category === 'Frozen' ? p.expireDate : p.albaikExpire; return calculateRemainingDays(dateToCheck) <= 0; }); }, [products]); const nextItemToUse = useMemo(() => { return [...products].filter(p => p.category !== 'Frozen').sort((a, b) => new Date(a.albaikExpire).getTime() - new Date(b.albaikExpire).getTime())[0]; }, [products]); const usageOrderMap = useMemo(() => { const map = new Map(); const rankTracker = new Map(); finalSortedProducts.forEach(product => { const count = finalSortedProducts.filter(p => p.productName === product.productName).length; if (count > 1) { const rank = (rankTracker.get(product.productName) || 0) + 1; rankTracker.set(product.productName, rank); const suffix = n => { if (n > 3 && n < 21) return 'th'; switch (n % 10) { case 1: return 'st'; case 2: return 'nd'; case 3: return 'rd'; default: return 'th'; } }; map.set(product.id, `${rank}${suffix(rank)} Batch`); } }); return map; }, [finalSortedProducts]); const handleClearConfirm = () => { onClearAll(); setIsConfirmModalOpen(false); }; if (products.length === 0) { return (<div className="text-center py-16 px-6 bg-white rounded-xl shadow-md border border-slate-200"><h3 className="text-xl font-semibold text-slate-700">No Products Yet</h3><p className="text-slate-500 mt-2">Add a product using the form above to get started.</p></div>); } return (<div className="bg-white rounded-xl shadow-md border border-slate-200 overflow-hidden relative"><ShareReportModal isOpen={isShareModalOpen} onClose={() => setIsShareModalOpen(false)} products={products} usageOrderMap={usageOrderMap} /><ExtensionRequestModal isOpen={isExtensionModalOpen} onClose={() => setIsExtensionModalOpen(false)} expiredProducts={expiredProducts} /><ConfirmationModal isOpen={isConfirmModalOpen} onClose={() => setIsConfirmModalOpen(false)} onConfirm={handleClearConfirm} title="Clear All Products?"><p>Are you sure you want to delete all products? This action cannot be undone.</p></ConfirmationModal><StoreBalanceModal isOpen={isBalanceModalOpen} onClose={() => setIsBalanceModalOpen(false)} products={products} /><div className="p-4 md:p-6 flex flex-wrap justify-between items-center gap-4 border-b border-slate-200"><h2 className="text-2xl font-bold text-slate-700">Inventory List</h2><div className="flex items-center gap-2 flex-wrap">{expiredProducts.length > 0 && (<button onClick={() => setIsExtensionModalOpen(true)} className="flex items-center gap-2 px-4 py-2 bg-yellow-100 text-yellow-800 font-semibold rounded-lg hover:bg-yellow-200 text-sm animate-pulse">🚨 Request Extension</button>)}<button onClick={() => setIsBalanceModalOpen(true)} className="flex items-center gap-2 px-4 py-2 bg-blue-50 text-blue-600 font-semibold rounded-lg hover:bg-blue-100 text-sm"><StoreIcon className="w-4 h-4" /> Store Balance</button><button onClick={() => setIsShareModalOpen(true)} className="flex items-center gap-2 px-4 py-2 bg-green-50 text-green-600 font-semibold rounded-lg hover:bg-green-100 text-sm"><ShareIcon className="w-4 h-4" /> Share Report...</button><button onClick={() => setIsConfirmModalOpen(true)} disabled={isClearing} className="flex items-center gap-2 px-4 py-2 bg-red-50 text-red-600 font-semibold rounded-lg hover:bg-red-100 disabled:bg-red-50 disabled:text-red-300 text-sm"><TrashIcon className="w-4 h-4" /> {isClearing ? 'Clearing...' : 'Clear All'}</button><button onClick={() => handleExportExcel(finalSortedProducts)} className="flex items-center gap-2 px-4 py-2 bg-green-50 text-green-800 font-semibold rounded-lg hover:bg-green-100 text-sm"><ExcelIcon className="w-4 h-4" /> Export to Excel</button><button onClick={() => handleExportPdf(finalSortedProducts)} className="flex items-center gap-2 px-4 py-2 bg-red-50 text-red-800 font-semibold rounded-lg hover:bg-red-100 text-sm"><PdfIcon className="w-4 h-4" /> Export to PDF</button></div></div><div className="overflow-x-auto"><table className="w-full text-sm text-left text-slate-600"><thead className="text-xs text-slate-700 uppercase bg-slate-100"><tr><th scope="col" className="px-6 py-3">Category</th><th scope="col" className="px-6 py-3">Product Name</th><th scope="col" className="px-6 py-3">Batch No.</th><th scope="col" className="px-6 py-3">Prod. Date</th><th scope="col" className="px-6 py-3">Expire Date</th><th scope="col" className="px-6 py-3">Albaik Expire</th><th scope="col" className="px-6 py-3 text-center">Quantity</th><th scope="col" className="px-6 py-3 text-center">Remain Days</th><th scope="col" className="px-6 py-3 text-right">Action</th></tr></thead><tbody>{finalSortedProducts.map((product) => { const remainingDays = calculateRemainingDays(product.category === 'Frozen' ? product.expireDate : product.albaikExpire); const usageLabel = usageOrderMap.get(product.id); const isNextToUse = nextItemToUse && product.id === nextItemToUse.id; return (<tr key={product.id} className={`border-b border-slate-200 hover:bg-slate-50 ${isNextToUse ? 'bg-indigo-50' : ''}`}><td className="px-6 py-4">{product.category}</td><td className="px-6 py-4 font-medium text-slate-900"><div className="flex items-center gap-2">{product.productName}{usageLabel && <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${usageLabel.startsWith('1st') ? 'text-indigo-600 bg-indigo-100' : 'text-slate-600 bg-slate-100'}`}>{usageLabel}</span>}</div></td><td className="px-6 py-4">{product.batchNumber || 'N/A'}</td><td className="px-6 py-4">{formatDate(product.productionDate)}</td><td className="px-6 py-4">{formatDate(product.expireDate)}</td><td className="px-6 py-4 font-semibold">{formatDate(product.albaikExpire)}</td><td className="px-6 py-4 text-center font-semibold text-slate-900">{`${product.quantityCarton || 0} Ctn, ${product.quantityPiece || 0} Pcs`}</td><td className="px-6 py-4 text-center"><RemainingDaysDisplay days={remainingDays} /></td><td className="px-6 py-4 text-right"><button onClick={() => onDeleteProduct(product.id)} className="text-slate-400 hover:text-red-600 p-1 rounded-full"><TrashIcon className="w-5 h-5" /></button></td></tr>); })}</tbody></table></div><div className="p-4 bg-slate-50 text-xs text-slate-500 flex items-center gap-2"><WarningIcon className="w-4 h-4 text-indigo-400" /><span>The <span className="font-bold text-indigo-600">highlighted row</span> indicates the next item to use overall (non-frozen items only).</span></div></div>); };
+        const App = () => { const [products, setProducts] = useState([]); const [isLoading, setIsLoading] = useState(true); const [isAdding, setIsAdding] = useState(false); const [isClearing, setIsClearing] = useState(false); const [error, setError] = useState(null); const loadProducts = useCallback(async () => { setIsLoading(true); try { await db.init(); const prods = await db.getAllProducts(); setProducts(prods); } catch (e) { setError("Could not load data from local database."); } finally { setIsLoading(false); } }, []); useEffect(() => { loadProducts(); }, [loadProducts]); const addProduct = useCallback(async (productData) => { setIsAdding(true); try { await db.init(); const allProducts = await db.getAllProducts(); const existingProduct = allProducts.find(p => p.productName === productData.productName && p.category === productData.category && p.productionDate === productData.productionDate && p.expireDate === productData.expireDate && p.albaikExpire === productData.albaikExpire); if (existingProduct) { existingProduct.quantityCarton = (existingProduct.quantityCarton || 0) + (productData.quantityCarton || 0); existingProduct.quantityPiece = (existingProduct.quantityPiece || 0) + (productData.quantityPiece || 0); await db.updateProduct(existingProduct); } else { await db.addProduct(productData); } await loadProducts(); } catch (e) { setError("Failed to save product."); } finally { setIsAdding(false); } }, [loadProducts]); const deleteProduct = useCallback(async (id) => { try { await db.deleteProduct(id); await loadProducts(); } catch (e) { setError("Failed to delete product."); } }, [loadProducts]); const clearAllProducts = useCallback(async () => { setIsClearing(true); try { await db.clearAllProducts(); await loadProducts(); } catch (e) { setError("Failed to clear all products."); } finally { setIsClearing(false); } }, [loadProducts]); return (<div className="min-h-screen bg-slate-50 font-sans"><main className="container mx-auto px-4 py-8 md:py-12"><header className="text-center mb-8 md:mb-12"><img src="https://placehold.co/600x200/FFFFFF/c9262c?text=ALBAIK" alt="Albaik Logo" className="mx-auto mb-4 w-40 h-auto md:w-48" /><h1 className="text-4xl md:text-5xl font-bold text-slate-800 tracking-tight">Albaik Food Systems Company</h1><p className="text-lg text-slate-500 max-w-2xl mx-auto mt-2">Developed By 'MD HAKIM MIA'</p></header>{error && <div className="bg-red-100 border-l-4 border-red-500 text-red-700 p-4 mb-8 rounded-md"><p>{error}</p></div>}<section className="mb-12 max-w-5xl mx-auto"><ProductForm onAddProduct={addProduct} isAdding={isAdding} products={products} /></section><section className="max-w-7xl mx-auto">{isLoading ? <div className="text-center py-12 text-slate-500">Loading Products...</div> : <ProductList products={products} onDeleteProduct={deleteProduct} onClearAll={clearAllProducts} isClearing={isClearing} />}</section></main><footer className="text-center py-6 text-sm text-slate-400"><p>Data is stored locally in your browser.</p><p className="mt-2">Built with React & Tailwind CSS</p></footer></div>); };
+        
+        const handleExportExcel = (products) => {
+            const data = products.map(p => ({
+                Category: p.category,
+                'Product Name': p.productName,
+                'Batch No.': p.batchNumber || 'N/A',
+                'Production Date': formatDate(p.productionDate),
+                'Expire Date': formatDate(p.expireDate),
+                'Albaik Expire': formatDate(p.albaikExpire),
+                'Quantity (Cartons)': p.quantityCarton || 0,
+                'Quantity (Pieces)': p.quantityPiece || 0,
+                'Remaining Days': calculateRemainingDays(p.category === 'Frozen' ? p.expireDate : p.albaikExpire) ?? 'N/A'
+            }));
+            const ws = XLSX.utils.json_to_sheet(data);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "Inventory");
+            XLSX.writeFile(wb, "albaik_inventory.xlsx");
+        };
+
+        const handleExportPdf = (products) => {
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF({ orientation: "landscape" });
+
+            doc.text("Albaik Inventory Report", 14, 16);
+            doc.setFontSize(10);
+            doc.text(`Exported on: ${new Date().toLocaleDateString('en-GB')}`, 14, 22);
+
+            const tableColumn = ["Category", "Product", "Batch", "Prod. Date", "Exp. Date", "Albaik Exp.", "Qty (Ctn)", "Qty (Pcs)", "Days Left"];
+            const tableRows = [];
+
+            products.forEach(product => {
+                const productData = [
+                    product.category,
+                    product.productName,
+                    product.batchNumber || 'N/A',
+                    formatDate(product.productionDate),
+                    formatDate(product.expireDate),
+                    formatDate(product.albaikExpire),
+                    product.quantityCarton || 0,
+                    product.quantityPiece || 0,
+                    calculateRemainingDays(product.category === 'Frozen' ? product.expireDate : product.albaikExpire) ?? 'N/A'
+                ];
+                tableRows.push(productData);
+            });
+
+            doc.autoTable({
+                head: [tableColumn],
+                body: tableRows,
+                startY: 30,
+                styles: { fontSize: 8 },
+                headStyles: { fillColor: [201, 179, 85] } // Albaik Gold color
+            });
+            doc.save("albaik_inventory.pdf");
+        };
+
+        const container = document.getElementById('root');
+        const root = ReactDOM.createRoot(container);
+        root.render(<App />);
+
+    </script>
+    
+    <script>
+        // Service Worker Registration for offline functionality
+        if ('serviceWorker' in navigator) {
+            const swCode = `
+                const CACHE_NAME = 'albaik-inventory-cache-v1';
+                // Cache the main HTML file. Other assets are from CDN and will be cached by the browser.
+                const urlsToCache = ['/']; 
+
+                self.addEventListener('install', event => {
+                    event.waitUntil(
+                        caches.open(CACHE_NAME)
+                            .then(cache => {
+                                console.log('Opened cache');
+                                // Use a request object to cache the current page, whatever its URL is.
+                                return cache.add(new Request('.'));
+                            })
+                    );
+                });
+
+                self.addEventListener('fetch', event => {
+                    // We only handle navigation requests for the main page.
+                    // Other requests (CDN scripts, etc.) go directly to the network.
+                    if (event.request.mode === 'navigate') {
+                        event.respondWith(
+                            caches.match(event.request)
+                                .then(response => {
+                                    return response || fetch(event.request);
+                                })
+                        );
+                    }
+                });
+            `;
+            const blob = new Blob([swCode], { type: 'application/javascript' });
+            const swUrl = URL.createObjectURL(blob);
+
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register(swUrl)
+                    .then(registration => {
+                        console.log('ServiceWorker registration successful with scope: ', registration.scope);
+                    })
+                    .catch(error => {
+                        console.log('ServiceWorker registration failed: ', error);
+                    });
+            });
+        }
+    </script>
+</body>
+</html>
